@@ -1,8 +1,10 @@
 #include <cstdio>
 #include <string.h>
-
+#include <vector>
+#include <assert.h>
 #define ITERATION_NUM 2
-
+#define NEIGH_WIN_SIZE 3
+#define NEIGH_SIZE NEIGH_WIN_SIZE*NEIGH_WIN_SIZE
 using namespace std;
 
 struct VolumeHeader
@@ -61,16 +63,92 @@ int readTestCode() {
 
 struct Color{
 	static Color averageColor(const Color c1, const Color c2, const Color c3);
+
+	double getDiff( const Color& respondPtr ) const
+	{
+		throw std::exception("The method or operation is not implemented.");
+	}
+
+
+};
+
+struct Boundary{
+	Boundary(int l, int r): left(l), right(r) {}
+	int left, right;
 };
 
 struct Neighbour{
+	Neighbour():colors(NEIGH_SIZE, NULL), size(0){};
+	bool add(const Color& color) {
+		if(size == NEIGH_SIZE)
+			return false;
+		colors[size++] = &color;
+		return true;
+	}
 
+	double getDiff( const Neighbour& nb_image ) const
+	{
+		double diff = 0.0f;
+		for(int i = 0; i < NEIGH_SIZE; ++i) {
+			const Color* colorptr = colors[i];
+			assert(colorptr);
+			const Color* respondPtr = nb_image.getColorPtr(i);
+			assert(respondPtr);
+			diff += colorptr->getDiff(*respondPtr);
+		}
+		return diff;
+	}
+
+	Color getCenterColor() const
+	{	
+		const Color* ptr = colors[ colors.size() / 2 ];
+		return *ptr;
+	}
+
+	const Color* getColorPtr( int i ) const
+	{
+		assert(i >= 0 && i < colors.size() && "index not correct.");
+		return colors[i];
+	}
+
+private:
+	vector<const Color*> colors;
+	int size;
 };
 
 struct Image {
 public:
-	Color findBestMatch(const Neighbour& neighbor) const;
-	
+	Color findBestMatch(const Neighbour& nb_voxel) const {
+		Neighbour nb_min;
+		double min_energy = INT_MAX;
+		for(int j = 0; j < height; ++j)
+			for(int i = 0; i < width; ++i) {
+				Neighbour nb_image = getNeighbour(i, j);
+				double energy = nb_voxel.getDiff(nb_image);
+				if(energy < min_energy) {
+					min_energy = energy;
+					nb_min = nb_image;
+				}
+			}
+		return nb_min.getCenterColor();
+	}
+private:
+	Neighbour getNeighbour(int i, int j) const {
+		const int half_win_size = (NEIGH_WIN_SIZE - 1) / 2;
+		Boundary xboundary(i - half_win_size, i + half_win_size),
+			yboundary(j - half_win_size, j + half_win_size);
+
+		Neighbour nb;
+		for(int x = xboundary.left; x <= xboundary.right; ++x)
+			for(int y = yboundary.left; y <= yboundary.right; ++y) {
+				nb.add(getColorReference(x, y));
+			}
+		return nb;
+	}
+
+	const Color& getColorReference(int x, int y) const;
+	int width;
+	int height;
 };
 
 struct Point {
@@ -83,9 +161,39 @@ public:
 	enum PLANE {X_PLANE, Y_PLANE, Z_PLANE};
 	VolTexture();
 	VolTexture(const VolumeHeader& header);
-	Neighbour getNeighbor(const Point& p, PLANE planeType) const;
+
+	void initWriteNoise() 
+	{
+		throw std::exception("The method or operation is not implemented.");
+	}
+
+	Neighbour getNeighbor(const Point& p, PLANE planeType) const {
+		const int half_win_size = (NEIGH_WIN_SIZE - 1) / 2;
+		Boundary xboundry(p.x - half_win_size, p.x + half_win_size), 
+			ybondary(p.y - half_win_size, p.y + half_win_size),
+			zboundary(p.z - half_win_size, p.z + half_win_size);
+
+		switch(planeType) {
+		case X_PLANE:
+			xboundry.left = xboundry.right = 0;
+			break;
+		case Y_PLANE:
+			ybondary.left = ybondary.right = 0;
+		case Z_PLANE:
+			zboundary.left = zboundary.right = 0;
+		}
+		Neighbour nb;
+		for(int x = xboundry.left; x <= xboundry.right; ++x)
+			for(int y = ybondary.left; y <= ybondary.right; ++y)
+				for(int z = zboundary.left; z <= zboundary.right; ++z) {
+					nb.add(getColorReference(x, y, z));
+				}
+		return nb;
+	}
 	void setColor(const Color color, int x, int y, int z);
 	void copyFrom(const VolTexture& other);
+private:
+	const Color& getColorReference(int x, int y, int z) const; 
 };
 
 
@@ -99,9 +207,7 @@ int main() {
 
 	// Init data with write noise.
 	VolTexture voltexture(header);
-
-
-
+	voltexture.initWriteNoise();
 
 	VolTexture temp_vol_texture;
 
