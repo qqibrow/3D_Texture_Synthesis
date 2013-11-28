@@ -31,6 +31,7 @@ void init_header(VolumeHeader* header) {
 	header->bytesPerChannel = 1;
 }
 
+/*
 int readTestCode() {
 	FILE * fin = fopen("woodwall.vol", "rb");
 	if(!fin) {
@@ -60,7 +61,7 @@ int readTestCode() {
 
 	fclose(fin);
 }
-
+*/
 struct Color{
 	static Color averageColor(const Color c1, const Color c2, const Color c3);
 
@@ -211,11 +212,12 @@ int main() {
 
 	VolTexture temp_vol_texture;
 
+	// Load Texture
 	Image texture2d;
 	const int vol_size = header.volSize;
-	for(int it = 0; it < ITERATION_NUM; ++it) {
 
-		// Go over each voxel 
+	for(int it = 0; it < ITERATION_NUM; ++it) {
+		// Go over each voxel, find it's best match for neighbor on each plane.
 		for(int x = 0; x < vol_size; ++x)
 			for(int y = 0; y < vol_size; ++y)
 				for(int z = 0; z < vol_size; ++z) {
