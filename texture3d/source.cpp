@@ -2,7 +2,9 @@
 #include <string.h>
 #include <vector>
 #include <assert.h>
-#define ITERATION_NUM 2
+#include <time.h>
+#include <stdlib.h>
+#define ITERATION_NUM 1
 #define NEIGH_WIN_SIZE 3
 #define NEIGH_SIZE NEIGH_WIN_SIZE*NEIGH_WIN_SIZE
 using namespace std;
@@ -18,6 +20,9 @@ struct VolumeHeader
 	int bytesPerChannel;
 };
 
+typedef unsigned char color_t;
+
+
 void writeTOFile(FILE* stream, VolumeHeader* header) {
 	char buf[4096];
 	memcpy(buf, header, sizeof(VolumeHeader));
@@ -31,7 +36,6 @@ void init_header(VolumeHeader* header) {
 	header->bytesPerChannel = 1;
 }
 
-/*
 int readTestCode() {
 	FILE * fin = fopen("woodwall.vol", "rb");
 	if(!fin) {
@@ -61,16 +65,33 @@ int readTestCode() {
 
 	fclose(fin);
 }
-*/
+
 struct Color{
-	static Color averageColor(const Color c1, const Color c2, const Color c3);
+	Color(): r(0), g(0), b(0){};
+	Color(color_t red, color_t green, color_t blue): r(red), g(green), b(blue){};
+
+	static Color averageColor(const Color c1, const Color c2, const Color c3)
+	{
+		Color new_color((c1.r + c2.r + c3.r) / 3, (c1.g + c2.g + c3.g)/3, (c1.b + c2.b + c3.b)/3);
+		return new_color;
+	}
 
 	double getDiff( const Color& respondPtr ) const
 	{
-		throw std::exception("The method or operation is not implemented.");
+		//throw std::exception("The method or operation is not implemented.");
+		return sqrt((double)(r - respondPtr.r) * (r - respondPtr.r) + (g - respondPtr.g) * (g - respondPtr.g) + (b - respondPtr.b) * (b - respondPtr.b));
 	}
 
+	void setColor(color_t red, color_t green, color_t blue)
+	{
+		r = red;
+		g = green;
+		b = blue;
+	}
 
+	color_t r;
+	color_t g;
+	color_t b;
 };
 
 struct Boundary{
@@ -119,16 +140,44 @@ private:
 
 struct Image {
 public:
+	Image();
+	Image(FILE *fin)
+	{
+		if(!fin) {
+			fprintf(stderr, "Error reading file.");
+			return;
+		}
+		char magic[8];
+		int n_colors;
+		fscanf(fin, "%s %d %d %d", magic, &width, &height, &n_colors);
+		examplar = new Color[width * height];
+		color_t r, g, b;
+		int index = 0;
+		while(fscanf(fin, "%c%c%c", &r, &g, &b) != EOF) {
+			examplar[index++].setColor(r, g, b);
+		}
+		nb_table = new Neighbour[width * height];
+		for(int y = 0; y < height; y++)
+			for(int x = 0; x < width; x++)
+				nb_table[y * width + x] = getNeighbour(x, y);
+	}
+
+	~Image()
+	{
+		clear();
+	}
+
 	Color findBestMatch(const Neighbour& nb_voxel) const {
 		Neighbour nb_min;
 		double min_energy = INT_MAX;
 		for(int j = 0; j < height; ++j)
 			for(int i = 0; i < width; ++i) {
-				Neighbour nb_image = getNeighbour(i, j);
-				double energy = nb_voxel.getDiff(nb_image);
+				//Neighbour nb_image = getNeighbour(i, j);
+				int index = j * width + i;
+				double energy = nb_voxel.getDiff(nb_table[index]);
 				if(energy < min_energy) {
 					min_energy = energy;
-					nb_min = nb_image;
+					nb_min = nb_table[index] ;
 				}
 			}
 		return nb_min.getCenterColor();
@@ -147,7 +196,23 @@ private:
 		return nb;
 	}
 
-	const Color& getColorReference(int x, int y) const;
+	const Color& getColorReference(int x, int y) const
+	{
+		if(y < 0) y += height;
+		if(x < 0) x += width;
+		return examplar[(y % height) * width + (x % width)]; //toroidal
+	}
+
+	void clear()
+	{
+		//delete [] examplar;
+		delete [] nb_table;
+		width = 0;
+		height = 0;
+	}
+
+	Color *examplar;
+	Neighbour *nb_table;
 	int width;
 	int height;
 };
@@ -161,11 +226,22 @@ class VolTexture {
 public:
 	enum PLANE {X_PLANE, Y_PLANE, Z_PLANE};
 	VolTexture();
-	VolTexture(const VolumeHeader& header);
+	VolTexture(const VolumeHeader& header) //*
+	{
+		volSize = header.volSize;
+		volTex = new Color[volSize * volSize * volSize];
+	}
+
+	~VolTexture()
+	{
+		clear();
+	}
 
 	void initWriteNoise() 
 	{
-		throw std::exception("The method or operation is not implemented.");
+		srand(time(NULL));
+		for(int index = 0; index < volSize * volSize * volSize; index++)
+			volTex[index].setColor(rand() % 256, rand() % 256, rand() % 256);
 	}
 
 	Neighbour getNeighbor(const Point& p, PLANE planeType) const {
@@ -180,21 +256,65 @@ public:
 			break;
 		case Y_PLANE:
 			ybondary.left = ybondary.right = 0;
+			break;
 		case Z_PLANE:
 			zboundary.left = zboundary.right = 0;
+			break;
 		}
 		Neighbour nb;
 		for(int x = xboundry.left; x <= xboundry.right; ++x)
 			for(int y = ybondary.left; y <= ybondary.right; ++y)
 				for(int z = zboundary.left; z <= zboundary.right; ++z) {
+					int index = getIndex(x, y, z);
 					nb.add(getColorReference(x, y, z));
 				}
 		return nb;
 	}
-	void setColor(const Color color, int x, int y, int z);
-	void copyFrom(const VolTexture& other);
+	void setColor(const Color &color, int x, int y, int z)
+	{
+		volTex[getIndex(x, y, z)].setColor(color.r, color.g, color.b);
+	}
+	void copyFrom(const VolTexture& other)
+	{
+		clear();
+		volSize = other.getSize();
+		volTex = new Color[volSize * volSize * volSize];
+		for(int x = 0; x < volSize; x++)
+			for(int y = 0; y < volSize; y++)
+				for(int z = 0; z < volSize; z++) {
+					setColor(other.getColorReference(x, y, z), x, y, z);
+				}
+	}
+	int getIndex(int x, int y, int z) const
+	{
+		if(x < 0) x += volSize;
+		if(y < 0) y += volSize;
+		if(z < 0) z += volSize;
+		return ((y % volSize) * volSize + (x % volSize)) * volSize + (z % volSize); //toroidal
+	}
+	int getSize() const
+	{
+		return volSize;
+	}
+	void dumpToFile(FILE *stream) const
+	{
+		for(int index = 0; index < volSize * volSize * volSize; index++)
+		{
+			fprintf(stream, "%c%c%c", volTex[index].r, volTex[index].g,volTex[index].b);
+		}
+	}
 private:
-	const Color& getColorReference(int x, int y, int z) const; 
+	const Color& getColorReference(int x, int y, int z) const
+	{
+		return volTex[getIndex(x, y, z)];
+	}
+	void clear()
+	{
+		volSize = 0;
+		delete [] volTex;
+	}
+	int volSize;
+	Color *volTex;
 };
 
 
@@ -210,16 +330,16 @@ int main() {
 	VolTexture voltexture(header);
 	voltexture.initWriteNoise();
 
-	VolTexture temp_vol_texture;
-
-	// Load Texture
-	Image texture2d;
+	VolTexture temp_vol_texture(header);
+	FILE *fin = fopen("cabin_firewood.ppm", "rb");
+	Image texture2d(fin);
 	const int vol_size = header.volSize;
-
+	
 	for(int it = 0; it < ITERATION_NUM; ++it) {
-		// Go over each voxel, find it's best match for neighbor on each plane.
-		for(int x = 0; x < vol_size; ++x)
-			for(int y = 0; y < vol_size; ++y)
+
+		// Go over each voxel 
+		for(int x = 0; x < vol_size; ++x) {
+			for(int y = 0; y < vol_size; ++y) {
 				for(int z = 0; z < vol_size; ++z) {
 					Point p(x, y, z);
 					Neighbour Nx = voltexture.getNeighbor(p, VolTexture::X_PLANE);
@@ -231,6 +351,16 @@ int main() {
 					const Color final = Color::averageColor(Cx, Cy, Cz);
 					temp_vol_texture.setColor(final, x, y, z);
 				}
+				
+			}
+			printf("%d\n", x);
+		}
 		voltexture.copyFrom(temp_vol_texture);
-	}	
+	}
+	
+	FILE *fout = fopen("new_vol.vol", "w");
+	writeTOFile(fout, &header);
+	voltexture.dumpToFile(fout);
+	fclose(fin);
+	fclose(fout);
 }
