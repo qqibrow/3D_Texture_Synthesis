@@ -4,10 +4,18 @@
 #include <assert.h>
 #include <time.h>
 #include <stdlib.h>
+#include<iostream>
 #define ITERATION_NUM 1
 #define NEIGH_WIN_SIZE 3
 #define NEIGH_SIZE NEIGH_WIN_SIZE*NEIGH_WIN_SIZE
+
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <stdint.h>
+#include <random>
+
 using namespace std;
+using namespace cv;
 
 struct VolumeHeader
 {
@@ -62,12 +70,11 @@ int readTestCode() {
 	int volBytes = header->volSize*header->volSize*header->volSize*header->numChannels;
 	unsigned char * data = new unsigned char[volBytes];
 	fread(data, volBytes, 1, fin);
-
 	fclose(fin);
 }
 
 struct Color{
-	Color(): r(0), g(0), b(0){};
+	Color(): r(255), g(0), b(0){};
 	Color(color_t red, color_t green, color_t blue): r(red), g(green), b(blue){};
 
 	static Color averageColor(const Color c1, const Color c2, const Color c3)
@@ -78,7 +85,6 @@ struct Color{
 
 	double getDiff( const Color& respondPtr ) const
 	{
-		//throw std::exception("The method or operation is not implemented.");
 		return sqrt((double)(r - respondPtr.r) * (r - respondPtr.r) + (g - respondPtr.g) * (g - respondPtr.g) + (b - respondPtr.b) * (b - respondPtr.b));
 	}
 
@@ -141,6 +147,28 @@ private:
 struct Image {
 public:
 	Image();
+	Image(cv::Mat image){
+		uint8_t* pixelPtr = (uint8_t*)image.data;
+		int cn = image.channels();
+		width = image.rows;
+		height = image.cols;
+
+		for (int i = 0; i < image.cols; i++) {
+			for (int j = 0; j < image.rows; j++) {
+				Vec3b intensity = image.at<Vec3b>(j, i);
+				uchar B = intensity.val[0];
+				uchar G = intensity.val[1];
+				uchar R = intensity.val[2];
+				examplar.push_back(Color(R, G, B));
+				}   
+			}
+		
+		nb_table = new Neighbour[width * height];
+		for(int y = 0; y < height; y++)
+			for(int x = 0; x < width; x++)
+				nb_table[y * width + x] = getNeighbour(x, y);		
+	}
+
 	Image(FILE *fin)
 	{
 		if(!fin) {
@@ -150,11 +178,9 @@ public:
 		char magic[8];
 		int n_colors;
 		fscanf(fin, "%s %d %d %d", magic, &width, &height, &n_colors);
-		examplar = new Color[width * height];
 		color_t r, g, b;
-		int index = 0;
 		while(fscanf(fin, "%c%c%c", &r, &g, &b) != EOF) {
-			examplar[index++].setColor(r, g, b);
+			examplar.push_back(Color(r, g, b));
 		}
 		nb_table = new Neighbour[width * height];
 		for(int y = 0; y < height; y++)
@@ -172,7 +198,6 @@ public:
 		double min_energy = INT_MAX;
 		for(int j = 0; j < height; ++j)
 			for(int i = 0; i < width; ++i) {
-				//Neighbour nb_image = getNeighbour(i, j);
 				int index = j * width + i;
 				double energy = nb_voxel.getDiff(nb_table[index]);
 				if(energy < min_energy) {
@@ -182,7 +207,7 @@ public:
 			}
 		return nb_min.getCenterColor();
 	}
-private:
+
 	Neighbour getNeighbour(int i, int j) const {
 		const int half_win_size = (NEIGH_WIN_SIZE - 1) / 2;
 		Boundary xboundary(i - half_win_size, i + half_win_size),
@@ -198,27 +223,30 @@ private:
 
 	const Color& getColorReference(int x, int y) const
 	{
+		y = y % height;
+		x = x % width;
 		if(y < 0) y += height;
 		if(x < 0) x += width;
-		return examplar[(y % height) * width + (x % width)]; //toroidal
+		int index = y * height + x;
+		return examplar[index]; //toroidal
 	}
 
 	void clear()
 	{
-		//delete [] examplar;
-		delete [] nb_table;
+		if(nb_table) delete [] nb_table;
+		nb_table = NULL;
 		width = 0;
 		height = 0;
 	}
-
-	Color *examplar;
+private:
+	vector<Color> examplar;
 	Neighbour *nb_table;
 	int width;
 	int height;
 };
 
-struct Point {
-	Point(int xx, int yy, int zz) : x(xx), y(yy), z(zz) {}
+struct Point3D {
+	Point3D(int xx, int yy, int zz) : x(xx), y(yy), z(zz) {}
 	int x, y, z;
 };
 
@@ -239,12 +267,11 @@ public:
 
 	void initWriteNoise() 
 	{
-		srand(time(NULL));
 		for(int index = 0; index < volSize * volSize * volSize; index++)
 			volTex[index].setColor(rand() % 256, rand() % 256, rand() % 256);
 	}
 
-	Neighbour getNeighbor(const Point& p, PLANE planeType) const {
+	Neighbour getNeighbor(const Point3D& p, PLANE planeType) const {
 		const int half_win_size = (NEIGH_WIN_SIZE - 1) / 2;
 		Boundary xboundry(p.x - half_win_size, p.x + half_win_size), 
 			ybondary(p.y - half_win_size, p.y + half_win_size),
@@ -276,14 +303,8 @@ public:
 	}
 	void copyFrom(const VolTexture& other)
 	{
-		clear();
-		volSize = other.getSize();
-		volTex = new Color[volSize * volSize * volSize];
-		for(int x = 0; x < volSize; x++)
-			for(int y = 0; y < volSize; y++)
-				for(int z = 0; z < volSize; z++) {
-					setColor(other.getColorReference(x, y, z), x, y, z);
-				}
+		assert(other.volSize == this->volSize);
+		memcpy(volTex, other.volTex, sizeof(Color)*volSize*volSize*volSize);
 	}
 	int getIndex(int x, int y, int z) const
 	{
@@ -319,6 +340,7 @@ private:
 
 
 int main() {
+	srand(time(NULL));
 	VolumeHeader header;
 	init_header(&header);
 	strcpy(header.texName, "TEST.vol");
@@ -328,19 +350,35 @@ int main() {
 
 	// Init data with write noise.
 	VolTexture voltexture(header);
-	voltexture.initWriteNoise();
+	//voltexture.initWriteNoise();
 
-	VolTexture temp_vol_texture(header);
-	FILE *fin = fopen("cabin_firewood.ppm", "rb");
-	Image texture2d(fin);
+//	VolTexture temp_vol_texture(header);
+//	FILE *fin = fopen("cabin_firewood.ppm", "rb");
+//	Image texture2d(fin);
 	const int vol_size = header.volSize;
 	
-	for(int it = 0; it < ITERATION_NUM; ++it) {
+	cv::Mat image = cv::imread("brickwall2.png", CV_LOAD_IMAGE_COLOR);
+	if(! image.data )                              // Check for invalid input
+	{
+		cout <<  "Could not open or find the image" << std::endl ;
+		return -1;
+	}
+	cv::namedWindow( "Display window", CV_WINDOW_AUTOSIZE );// Create a window for display.
+	cv::imshow( "Display window", image );      
+	cv::waitKey(0); 	
+
+	Image imagecv(image);
+
+	//for(int it = 0; it < ITERATION_NUM; ++it) {
 
 		// Go over each voxel 
+	std::default_random_engine generator;
+	std::uniform_int_distribution<int> distribution(0,255);
+
 		for(int x = 0; x < vol_size; ++x) {
 			for(int y = 0; y < vol_size; ++y) {
 				for(int z = 0; z < vol_size; ++z) {
+					/*
 					Point p(x, y, z);
 					Neighbour Nx = voltexture.getNeighbor(p, VolTexture::X_PLANE);
 					const Color Cx = texture2d.findBestMatch(Nx);
@@ -350,17 +388,21 @@ int main() {
 					const Color Cz = texture2d.findBestMatch(Nz);
 					const Color final = Color::averageColor(Cx, Cy, Cz);
 					temp_vol_texture.setColor(final, x, y, z);
+					*/
+					const Color random_color = imagecv.getColorReference(rand(), rand());				
+					voltexture.setColor(random_color, x, y, z);
+					//voltexture.setColor(Color(distribution(generator), distribution(generator), distribution(generator)), x, y, z);
 				}
 				
 			}
 			printf("%d\n", x);
 		}
-		voltexture.copyFrom(temp_vol_texture);
-	}
+//		voltexture.copyFrom(temp_vol_texture);
+//	}
 	
-	FILE *fout = fopen("new_vol.vol", "w");
+	FILE *fout = fopen("hopework.vol", "w");
 	writeTOFile(fout, &header);
 	voltexture.dumpToFile(fout);
-	fclose(fin);
+//	fclose(fin);
 	fclose(fout);
 }
