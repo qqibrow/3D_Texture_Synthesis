@@ -5,7 +5,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include<iostream>
-#define ITERATION_NUM 1
+#define ITERATION_NUM 10
 #define NEIGH_WIN_SIZE 3
 #define NEIGH_SIZE NEIGH_WIN_SIZE*NEIGH_WIN_SIZE
 
@@ -85,7 +85,8 @@ struct Color{
 
 	double getDiff( const Color& respondPtr ) const
 	{
-		return sqrt((double)(r - respondPtr.r) * (r - respondPtr.r) + (g - respondPtr.g) * (g - respondPtr.g) + (b - respondPtr.b) * (b - respondPtr.b));
+		//return sqrt((double)(r - respondPtr.r) * (r - respondPtr.r) + (g - respondPtr.g) * (g - respondPtr.g) + (b - respondPtr.b) * (b - respondPtr.b));
+		return abs(r - respondPtr.r) + abs(g - respondPtr.g) + abs(b - respondPtr.b);
 	}
 
 	void setColor(color_t red, color_t green, color_t blue)
@@ -193,7 +194,7 @@ public:
 		clear();
 	}
 
-	Color findBestMatch(const Neighbour& nb_voxel) const {
+	Color findBestMatch(const Neighbour& nb_voxel, double& sum_energy) const {
 		Neighbour nb_min;
 		double min_energy = INT_MAX;
 		for(int j = 0; j < height; ++j)
@@ -205,6 +206,7 @@ public:
 					nb_min = nb_table[index] ;
 				}
 			}
+		sum_energy += min_energy;
 		return nb_min.getCenterColor();
 	}
 
@@ -343,18 +345,18 @@ int main() {
 	srand(time(NULL));
 	VolumeHeader header;
 	init_header(&header);
-	strcpy(header.texName, "TEST.vol");
+	strcpy_s(header.texName, "TEST.vol");
 	header.numChannels = 3;
-	header.volSize = 128;
+	header.volSize = 4;
 	header.wrap = true;
 
 	// Init data with write noise.
 	VolTexture voltexture(header);
-	//voltexture.initWriteNoise();
+	voltexture.initWriteNoise();
 
-//	VolTexture temp_vol_texture(header);
+	VolTexture temp_vol_texture(header);
 //	FILE *fin = fopen("cabin_firewood.ppm", "rb");
-//	Image texture2d(fin);
+	//Image texture2d(fin);
 	const int vol_size = header.volSize;
 	
 	cv::Mat image = cv::imread("brickwall2.png", CV_LOAD_IMAGE_COLOR);
@@ -363,42 +365,38 @@ int main() {
 		cout <<  "Could not open or find the image" << std::endl ;
 		return -1;
 	}
-	cv::namedWindow( "Display window", CV_WINDOW_AUTOSIZE );// Create a window for display.
-	cv::imshow( "Display window", image );      
-	cv::waitKey(0); 	
+//	cv::namedWindow( "Display window", CV_WINDOW_AUTOSIZE );// Create a window for display.
+//	cv::imshow( "Display window", image );      
+//	cv::waitKey(0); 	
 
 	Image imagecv(image);
 
-	//for(int it = 0; it < ITERATION_NUM; ++it) {
-
+	for(int it = 0; it < ITERATION_NUM; ++it) {
+		cout << "Now get into first iteration...\n";
 		// Go over each voxel 
-	std::default_random_engine generator;
-	std::uniform_int_distribution<int> distribution(0,255);
-
+		double energy_this_iteration = 0.0f;
 		for(int x = 0; x < vol_size; ++x) {
 			for(int y = 0; y < vol_size; ++y) {
 				for(int z = 0; z < vol_size; ++z) {
-					/*
-					Point p(x, y, z);
+					//fprintf(stdout, "Gettting into Point(%d, %d, %d)\n", x, y, z);
+					Point3D p(x, y, z);
 					Neighbour Nx = voltexture.getNeighbor(p, VolTexture::X_PLANE);
-					const Color Cx = texture2d.findBestMatch(Nx);
+					const Color Cx = imagecv.findBestMatch(Nx, energy_this_iteration);
 					Neighbour Ny = voltexture.getNeighbor(p, VolTexture::Y_PLANE);
-					const Color Cy = texture2d.findBestMatch(Ny);
+					const Color Cy = imagecv.findBestMatch(Ny, energy_this_iteration);
 					Neighbour Nz = voltexture.getNeighbor(p, VolTexture::Z_PLANE);
-					const Color Cz = texture2d.findBestMatch(Nz);
+					const Color Cz = imagecv.findBestMatch(Nz, energy_this_iteration);
 					const Color final = Color::averageColor(Cx, Cy, Cz);
-					temp_vol_texture.setColor(final, x, y, z);
-					*/
-					const Color random_color = imagecv.getColorReference(rand(), rand());				
-					voltexture.setColor(random_color, x, y, z);
-					//voltexture.setColor(Color(distribution(generator), distribution(generator), distribution(generator)), x, y, z);
-				}
-				
+					temp_vol_texture.setColor(final, x, y, z);					
+					//const Color random_color = imagecv.getColorReference(rand(), rand());				
+					//voltexture.setColor(random_color, x, y, z);
+				}				
 			}
-			printf("%d\n", x);
 		}
-//		voltexture.copyFrom(temp_vol_texture);
-//	}
+		cout << "Itertion " << it <<" finished.\n";
+		cout << "Energy this iteration : " << energy_this_iteration << endl;
+		voltexture.copyFrom(temp_vol_texture);
+	}
 	
 	FILE *fout = fopen("hopework.vol", "w");
 	writeTOFile(fout, &header);
